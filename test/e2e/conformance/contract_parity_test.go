@@ -3,6 +3,7 @@
 package conformance
 
 import (
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -142,6 +143,94 @@ func TestContractAddUserParity(t *testing.T) {
 		}
 		if !reflect.DeepEqual(outcome, oracle) {
 			t.Fatalf("adduser parity mismatch for %s: got=%+v want=%+v", factory.name, outcome, oracle)
+		}
+	}
+}
+
+func TestContractMissingCRDPathStrictModeParity(t *testing.T) {
+	requireEnvtestAssets(t)
+	missingPath := filepath.Join(t.TempDir(), "definitely-missing")
+	factories := []struct {
+		name string
+		new  func() contractEnvironment
+	}{
+		{
+			name: "envtest",
+			new: func() contractEnvironment {
+				return &envtest.Environment{
+					CRDDirectoryPaths:     []string{missingPath},
+					ErrorIfCRDPathMissing: true,
+				}
+			},
+		},
+		{
+			name: "kplanetest",
+			new: func() contractEnvironment {
+				return &kplanetest.Environment{
+					Environment: envtest.Environment{
+						CRDDirectoryPaths:     []string{missingPath},
+						ErrorIfCRDPathMissing: true,
+					},
+				}
+			},
+		},
+	}
+
+	var oracle bool
+	for i, factory := range factories {
+		_, err := factory.new().Start()
+		gotErr := err != nil
+		if i == 0 {
+			oracle = gotErr
+			continue
+		}
+		if gotErr != oracle {
+			t.Fatalf("missing CRD path strict mode parity mismatch for %s: gotErr=%t wantErr=%t", factory.name, gotErr, oracle)
+		}
+	}
+}
+
+func TestContractUseExistingClusterParity(t *testing.T) {
+	useExisting := true
+	factories := []struct {
+		name string
+		new  func() contractEnvironment
+	}{
+		{
+			name: "envtest",
+			new: func() contractEnvironment {
+				return &envtest.Environment{UseExistingCluster: &useExisting}
+			},
+		},
+		{
+			name: "kplanetest",
+			new: func() contractEnvironment {
+				return &kplanetest.Environment{
+					Environment: envtest.Environment{UseExistingCluster: &useExisting},
+				}
+			},
+		},
+	}
+
+	var oracle struct {
+		hasErr bool
+		cfgNil bool
+	}
+	for i, factory := range factories {
+		cfg, err := factory.new().Start()
+		outcome := struct {
+			hasErr bool
+			cfgNil bool
+		}{
+			hasErr: err != nil,
+			cfgNil: cfg == nil,
+		}
+		if i == 0 {
+			oracle = outcome
+			continue
+		}
+		if !reflect.DeepEqual(outcome, oracle) {
+			t.Fatalf("use existing cluster parity mismatch for %s: got=%+v want=%+v", factory.name, outcome, oracle)
 		}
 	}
 }

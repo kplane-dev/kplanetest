@@ -17,6 +17,7 @@ Use this checklist to keep `kplanetest` behavior aligned with upstream
 - CRD path install behavior parity.
 - Missing CRD path behavior parity when strict flags are enabled.
 - Webhook install/cleanup behavior parity.
+- `UseExistingCluster` behavior parity for config/error shape.
 
 ## Test execution contract
 - `go test ./...` passes.
