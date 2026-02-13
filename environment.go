@@ -85,6 +85,9 @@ func (e *Environment) resolveBackend() Backend {
 	if e.Backend != nil {
 		return e.Backend
 	}
+	if sharedBackendEnabled() {
+		return defaultSharedBackend
+	}
 	return EnvtestBackend{}
 }
 

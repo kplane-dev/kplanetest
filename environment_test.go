@@ -174,3 +174,12 @@ func TestExplicitBackendFieldIsUsed(t *testing.T) {
 		t.Fatalf("unexpected config from explicit backend: %#v", cfg)
 	}
 }
+
+func TestResolveBackendUsesSharedBackendWhenFlagEnabled(t *testing.T) {
+	t.Setenv(experimentalSharedBackendEnv, "1")
+	e := &Environment{}
+	backend := e.resolveBackend()
+	if _, ok := backend.(*SharedEnvtestBackend); !ok {
+		t.Fatalf("expected shared backend when %s=1, got %T", experimentalSharedBackendEnv, backend)
+	}
+}

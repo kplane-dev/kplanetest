@@ -46,6 +46,10 @@ defer env.Stop()
 - **Conformance (e2e)** runs identical API behavior checks against `envtest` and `kplanetest`.
 - **Performance** includes benchmark coverage for metrics overhead and optional startup guardrails.
 
+## Experimental backend mode
+Set `KPLANETEST_EXPERIMENTAL_SHARED_BACKEND=1` to opt into an in-process shared
+envtest backend prototype. Default behavior remains direct upstream envtest lifecycle.
+
 Run local unit tests:
 ```bash
 go test ./...
