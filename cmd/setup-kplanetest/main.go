@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	defaultVersion = "v0.0.5"
+	defaultVersion = "v0.0.6"
 	modulePath     = "github.com/kplane-dev/apiserver"
 	binaryName     = "kplane-apiserver"
 )
