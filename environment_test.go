@@ -158,11 +158,29 @@ func TestSetBackendIsUsed(t *testing.T) {
 	}
 }
 
-func TestResolveBackendUsesSharedBackendWhenFlagEnabled(t *testing.T) {
-	t.Setenv(experimentalSharedBackendEnv, "1")
+func TestResolveBackendUsesKplaneByDefault(t *testing.T) {
+	t.Setenv("KPLANETEST_BACKEND", "")
+	e := &Environment{}
+	backend := stateFor(e).resolveBackend()
+	if _, ok := backend.(*KplaneBackend); !ok {
+		t.Fatalf("expected kplane backend by default, got %T", backend)
+	}
+}
+
+func TestResolveBackendSharedOverride(t *testing.T) {
+	t.Setenv("KPLANETEST_BACKEND", "envtest-shared")
 	e := &Environment{}
 	backend := stateFor(e).resolveBackend()
 	if _, ok := backend.(*SharedEnvtestBackend); !ok {
-		t.Fatalf("expected shared backend when %s=1, got %T", experimentalSharedBackendEnv, backend)
+		t.Fatalf("expected envtest-shared backend override, got %T", backend)
+	}
+}
+
+func TestResolveBackendEnvtestOverride(t *testing.T) {
+	t.Setenv("KPLANETEST_BACKEND", "envtest")
+	e := &Environment{}
+	backend := stateFor(e).resolveBackend()
+	if _, ok := backend.(EnvtestBackend); !ok {
+		t.Fatalf("expected envtest backend override, got %T", backend)
 	}
 }

@@ -34,7 +34,9 @@ func allContractFactories() []contractFactory {
 		{
 			name: "kplanetest",
 			new: func() contractEnvironment {
-				return &kplanetest.Environment{}
+				e := &kplanetest.Environment{}
+				e.SetBackend(kplanetest.EnvtestBackend{})
+				return e
 			},
 		},
 	}
@@ -166,10 +168,12 @@ func TestContractMissingCRDPathStrictModeParity(t *testing.T) {
 		{
 			name: "kplanetest",
 			new: func() contractEnvironment {
-				return &kplanetest.Environment{
+				e := &kplanetest.Environment{
 					CRDDirectoryPaths:     []string{missingPath},
 					ErrorIfCRDPathMissing: true,
 				}
+				e.SetBackend(kplanetest.EnvtestBackend{})
+				return e
 			},
 		},
 	}
@@ -203,7 +207,9 @@ func TestContractUseExistingClusterParity(t *testing.T) {
 		{
 			name: "kplanetest",
 			new: func() contractEnvironment {
-				return &kplanetest.Environment{UseExistingCluster: &useExisting}
+				e := &kplanetest.Environment{UseExistingCluster: &useExisting}
+				e.SetBackend(kplanetest.EnvtestBackend{})
+				return e
 			},
 		},
 	}

@@ -1,6 +1,8 @@
 package kplanetest
 
 import (
+	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,6 +58,8 @@ type environmentState struct {
 
 var environmentStates sync.Map // map[*Environment]*environmentState
 
+var defaultKplaneBackend = NewKplaneBackend()
+
 // Environment is a drop-in compatible envtest surface.
 // It keeps the same field contract as upstream envtest while allowing backend
 // selection and instrumentation through package internals.
@@ -78,10 +82,13 @@ func stateFor(e *Environment) *environmentState {
 }
 
 func defaultBackend() Backend {
-	if sharedBackendEnabled() {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("KPLANETEST_BACKEND"))) {
+	case "envtest":
+		return EnvtestBackend{}
+	case "envtest-shared":
 		return defaultSharedBackend
 	}
-	return EnvtestBackend{}
+	return defaultKplaneBackend
 }
 
 func (s *environmentState) clock() func() time.Time {

@@ -1,14 +1,11 @@
 package kplanetest
 
 import (
-	"os"
 	"sync"
 
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
-
-const experimentalSharedBackendEnv = "KPLANETEST_EXPERIMENTAL_SHARED_BACKEND"
 
 var defaultSharedBackend = NewSharedEnvtestBackend()
 
@@ -31,10 +28,6 @@ func NewSharedEnvtestBackend() *SharedEnvtestBackend {
 		delegate: EnvtestBackend{},
 		state:    &sharedBackendState{},
 	}
-}
-
-func sharedBackendEnabled() bool {
-	return os.Getenv(experimentalSharedBackendEnv) == "1"
 }
 
 func (b *SharedEnvtestBackend) Start(env *envtest.Environment) (*rest.Config, error) {

@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Download modules
+        run: go mod download
+
+      - name: Check formatting
+        run: |
+          UNFORMATTED="$(gofmt -l .)"
+          if [ -n "${UNFORMATTED}" ]; then
+            echo "The following files need gofmt:"
+            echo "${UNFORMATTED}"
+            exit 1
+          fi
+
+      - name: Go vet
+        run: go vet ./...
+
+  build-and-unit:
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Unit tests
+        run: go test ./... -count=1 -timeout=60s
+
+  e2e-conformance:
+    runs-on: ubuntu-latest
+    needs: build-and-unit
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install envtest setup tool
+        run: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+
+      - name: Resolve envtest assets
+        run: |
+          echo "KUBEBUILDER_ASSETS=$($(go env GOPATH)/bin/setup-envtest use -p path 1.31.x)" >> "${GITHUB_ENV}"
+
+      - name: Resolve kplanetest assets
+        run: |
+          echo "KPLANETEST_ASSETS=$(go run ./cmd/setup-kplanetest use -p path v0.0.4)" >> "${GITHUB_ENV}"
+
+      - name: E2E conformance tests
+        run: go test -tags=e2e ./test/e2e/conformance/... -v -count=1 -timeout=240s
+
+  e2e-perf:
+    runs-on: ubuntu-latest
+    needs: build-and-unit
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install envtest setup tool
+        run: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+
+      - name: Resolve envtest assets
+        run: |
+          echo "KUBEBUILDER_ASSETS=$($(go env GOPATH)/bin/setup-envtest use -p path 1.31.x)" >> "${GITHUB_ENV}"
+
+      - name: Resolve kplanetest assets
+        run: |
+          echo "KPLANETEST_ASSETS=$(go run ./cmd/setup-kplanetest use -p path v0.0.4)" >> "${GITHUB_ENV}"
+
+      - name: E2E perf tests
+        run: |
+          KPLANETEST_PERF=1 go test -tags=e2e ./test/perf/... -v -count=1 -timeout=240s
