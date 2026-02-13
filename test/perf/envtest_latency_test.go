@@ -4,6 +4,7 @@ package perf
 
 import (
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -19,7 +20,8 @@ func TestStartupLatencyGuardrail(t *testing.T) {
 		t.Skip("set KPLANETEST_PERF=1 to run perf guardrails")
 	}
 
-	const iterations = 3
+	iterations := readPositiveIntEnv(t, "KPLANETEST_PERF_ITERATIONS", 3)
+	budgetPct := readPositiveIntEnv(t, "KPLANETEST_STARTUP_BUDGET_PCT", 20)
 	var envtestTotal time.Duration
 	var kplaneTotal time.Duration
 
@@ -49,11 +51,31 @@ func TestStartupLatencyGuardrail(t *testing.T) {
 		kplaneTotal += time.Since(start)
 	}
 
-	envtestAvg := envtestTotal / iterations
-	kplaneAvg := kplaneTotal / iterations
+	envtestAvg := envtestTotal / time.Duration(iterations)
+	kplaneAvg := kplaneTotal / time.Duration(iterations)
 
 	// v1 is envtest-backed, so we enforce "no major regression" instead of absolute speedup.
-	if kplaneAvg > envtestAvg+(envtestAvg/5) {
-		t.Fatalf("startup regression too high: envtest_avg=%s kplanetest_avg=%s", envtestAvg, kplaneAvg)
+	allowed := envtestAvg + ((envtestAvg * time.Duration(budgetPct)) / 100)
+	if kplaneAvg > allowed {
+		t.Fatalf(
+			"startup regression too high: envtest_avg=%s kplanetest_avg=%s allowed=%s budget_pct=%d",
+			envtestAvg,
+			kplaneAvg,
+			allowed,
+			budgetPct,
+		)
 	}
+}
+
+func readPositiveIntEnv(t *testing.T, key string, fallback int) int {
+	t.Helper()
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	v, err := strconv.Atoi(raw)
+	if err != nil || v <= 0 {
+		t.Fatalf("invalid %s value %q: expected positive integer", key, raw)
+	}
+	return v
 }

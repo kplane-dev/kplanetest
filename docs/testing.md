@@ -17,6 +17,13 @@
 
 ## Prerequisites for e2e
 Set `KUBEBUILDER_ASSETS` to an envtest assets directory.
+For perf guardrails, also set `KPLANETEST_PERF=1`.
+
+## CI helper
+Use `scripts/ci-verify.sh` for a CI-friendly default flow:
+- always run unit tests,
+- run e2e conformance when `KUBEBUILDER_ASSETS` is set,
+- run perf guardrails when both `KUBEBUILDER_ASSETS` and `KPLANETEST_PERF=1` are set.
 
 ## Attribution policy
 When borrowing tests, fixtures, or structure from upstream projects:
