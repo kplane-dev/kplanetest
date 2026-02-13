@@ -62,7 +62,7 @@ go install github.com/kplane-dev/kplanetest/cmd/setup-kplanetest@latest
 
 Prepare assets cache and print path:
 ```bash
-export KPLANETEST_ASSETS="$(setup-kplanetest use -p path v0.0.4)"
+export KPLANETEST_ASSETS="$(setup-kplanetest use -p path v0.0.5)"
 ```
 
 Or set a direct binary path:

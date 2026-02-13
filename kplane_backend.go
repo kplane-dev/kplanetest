@@ -35,7 +35,7 @@ import (
 const (
 	defaultRootControlPlane = "root"
 	kplaneReadyTimeout      = 60 * time.Second
-	kplaneModuleVersion     = "v0.0.4"
+	kplaneModuleVersion     = "v0.0.5"
 	kplaneAssetsEnv         = "KPLANETEST_ASSETS"
 	kplaneBinaryEnv         = "KPLANETEST_APISERVER_BINARY"
 )
