@@ -31,7 +31,7 @@ func TestEnvironmentStartStopAndMetrics(t *testing.T) {
 			now = now.Add(10 * time.Millisecond)
 			return now
 		},
-		newBackend: func() environmentBackend {
+		newBackend: func() Backend {
 			return &fakeBackend{
 				startFn: func(_ *envtest.Environment) (*rest.Config, error) { return cfg, nil },
 				stopFn:  func(_ *envtest.Environment) error { return nil },
@@ -61,7 +61,7 @@ func TestEnvironmentStartErrorIsRecorded(t *testing.T) {
 	boom := errors.New("boom")
 	e := &Environment{
 		Metrics: NewMetrics(),
-		newBackend: func() environmentBackend {
+		newBackend: func() Backend {
 			return &fakeBackend{
 				startFn: func(_ *envtest.Environment) (*rest.Config, error) { return nil, boom },
 				stopFn:  func(_ *envtest.Environment) error { return nil },
@@ -87,7 +87,7 @@ func TestEnvironmentStopErrorIsRecorded(t *testing.T) {
 	boom := errors.New("boom")
 	e := &Environment{
 		Metrics: NewMetrics(),
-		newBackend: func() environmentBackend {
+		newBackend: func() Backend {
 			return &fakeBackend{
 				startFn: func(_ *envtest.Environment) (*rest.Config, error) { return &rest.Config{Host: "https://ok"}, nil },
 				stopFn:  func(_ *envtest.Environment) error { return boom },
@@ -125,7 +125,7 @@ func TestEmbeddedUpstreamDefinitionIsUsedDirectly(t *testing.T) {
 	var seenErrorIfMissing bool
 	var seenAttachOutput bool
 
-	e.newBackend = func() environmentBackend {
+	e.newBackend = func() Backend {
 		return &fakeBackend{
 			startFn: func(env *envtest.Environment) (*rest.Config, error) {
 				seenCRDPaths = append(seenCRDPaths, env.CRDDirectoryPaths...)
@@ -148,5 +148,29 @@ func TestEmbeddedUpstreamDefinitionIsUsedDirectly(t *testing.T) {
 	}
 	if !seenAttachOutput {
 		t.Fatal("AttachControlPlaneOutput not propagated")
+	}
+}
+
+func TestExplicitBackendFieldIsUsed(t *testing.T) {
+	called := false
+	e := &Environment{
+		Backend: &fakeBackend{
+			startFn: func(_ *envtest.Environment) (*rest.Config, error) {
+				called = true
+				return &rest.Config{Host: "https://field-backend"}, nil
+			},
+			stopFn: func(_ *envtest.Environment) error { return nil },
+		},
+	}
+
+	cfg, err := e.Start()
+	if err != nil {
+		t.Fatalf("unexpected start error: %v", err)
+	}
+	if !called {
+		t.Fatal("expected explicit Backend field to be used")
+	}
+	if cfg == nil || cfg.Host != "https://field-backend" {
+		t.Fatalf("unexpected config from explicit backend: %#v", cfg)
 	}
 }

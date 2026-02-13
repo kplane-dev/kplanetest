@@ -22,6 +22,7 @@ This keeps the Kubernetes API contract while eliminating the perâ€‘test controlâ
 ## Status
 Initial v1 is implemented as an envtest-compatible surface with:
 - `Environment` `Start()` / `Stop()` contract parity.
+- Upstream `envtest.Environment` as the canonical configuration contract.
 - CRD path and webhook options passthrough.
 - In-memory lifecycle metrics for test assertions.
 - e2e conformance parity tests against upstream envtest.
