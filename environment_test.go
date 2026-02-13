@@ -25,19 +25,15 @@ func (f *fakeBackend) Stop(env *envtest.Environment) error {
 func TestEnvironmentStartStopAndMetrics(t *testing.T) {
 	now := time.Now()
 	cfg := &rest.Config{Host: "https://example.local"}
-	e := &Environment{
-		Metrics: NewMetrics(),
-		now: func() time.Time {
-			now = now.Add(10 * time.Millisecond)
-			return now
-		},
-		newBackend: func() Backend {
-			return &fakeBackend{
-				startFn: func(_ *envtest.Environment) (*rest.Config, error) { return cfg, nil },
-				stopFn:  func(_ *envtest.Environment) error { return nil },
-			}
-		},
-	}
+	e := &Environment{}
+	e.setClockForTesting(func() time.Time {
+		now = now.Add(10 * time.Millisecond)
+		return now
+	})
+	e.setBackendForTesting(&fakeBackend{
+		startFn: func(_ *envtest.Environment) (*rest.Config, error) { return cfg, nil },
+		stopFn:  func(_ *envtest.Environment) error { return nil },
+	})
 
 	_, err := e.Start()
 	if err != nil {
@@ -48,7 +44,7 @@ func TestEnvironmentStartStopAndMetrics(t *testing.T) {
 		t.Fatalf("unexpected stop error: %v", err)
 	}
 
-	snap := e.Metrics.Snapshot()
+	snap := e.MetricsSnapshot()
 	if snap.StartAttempts != 1 || snap.StartSuccesses != 1 {
 		t.Fatalf("unexpected start metrics: %#v", snap)
 	}
@@ -59,15 +55,11 @@ func TestEnvironmentStartStopAndMetrics(t *testing.T) {
 
 func TestEnvironmentStartErrorIsRecorded(t *testing.T) {
 	boom := errors.New("boom")
-	e := &Environment{
-		Metrics: NewMetrics(),
-		newBackend: func() Backend {
-			return &fakeBackend{
-				startFn: func(_ *envtest.Environment) (*rest.Config, error) { return nil, boom },
-				stopFn:  func(_ *envtest.Environment) error { return nil },
-			}
-		},
-	}
+	e := &Environment{}
+	e.setBackendForTesting(&fakeBackend{
+		startFn: func(_ *envtest.Environment) (*rest.Config, error) { return nil, boom },
+		stopFn:  func(_ *envtest.Environment) error { return nil },
+	})
 
 	_, err := e.Start()
 	if err == nil {
@@ -77,7 +69,7 @@ func TestEnvironmentStartErrorIsRecorded(t *testing.T) {
 		t.Fatalf("expected original start error, got %v", err)
 	}
 
-	snap := e.Metrics.Snapshot()
+	snap := e.MetricsSnapshot()
 	if snap.StartAttempts != 1 || snap.StartSuccesses != 0 {
 		t.Fatalf("unexpected start metrics after error: %#v", snap)
 	}
@@ -85,15 +77,11 @@ func TestEnvironmentStartErrorIsRecorded(t *testing.T) {
 
 func TestEnvironmentStopErrorIsRecorded(t *testing.T) {
 	boom := errors.New("boom")
-	e := &Environment{
-		Metrics: NewMetrics(),
-		newBackend: func() Backend {
-			return &fakeBackend{
-				startFn: func(_ *envtest.Environment) (*rest.Config, error) { return &rest.Config{Host: "https://ok"}, nil },
-				stopFn:  func(_ *envtest.Environment) error { return boom },
-			}
-		},
-	}
+	e := &Environment{}
+	e.setBackendForTesting(&fakeBackend{
+		startFn: func(_ *envtest.Environment) (*rest.Config, error) { return &rest.Config{Host: "https://ok"}, nil },
+		stopFn:  func(_ *envtest.Environment) error { return boom },
+	})
 
 	if _, err := e.Start(); err != nil {
 		t.Fatalf("unexpected start error: %v", err)
@@ -106,7 +94,7 @@ func TestEnvironmentStopErrorIsRecorded(t *testing.T) {
 		t.Fatalf("expected original stop error, got %v", err)
 	}
 
-	snap := e.Metrics.Snapshot()
+	snap := e.MetricsSnapshot()
 	if snap.StopAttempts != 1 || snap.StopSuccesses != 0 {
 		t.Fatalf("unexpected stop metrics after error: %#v", snap)
 	}
@@ -114,28 +102,24 @@ func TestEnvironmentStopErrorIsRecorded(t *testing.T) {
 
 func TestEmbeddedUpstreamDefinitionIsUsedDirectly(t *testing.T) {
 	e := &Environment{
-		Environment: envtest.Environment{
-			CRDDirectoryPaths:        []string{"a", "b"},
-			ErrorIfCRDPathMissing:    true,
-			AttachControlPlaneOutput: true,
-		},
+		CRDDirectoryPaths:        []string{"a", "b"},
+		ErrorIfCRDPathMissing:    true,
+		AttachControlPlaneOutput: true,
 	}
 
 	var seenCRDPaths []string
 	var seenErrorIfMissing bool
 	var seenAttachOutput bool
 
-	e.newBackend = func() Backend {
-		return &fakeBackend{
-			startFn: func(env *envtest.Environment) (*rest.Config, error) {
-				seenCRDPaths = append(seenCRDPaths, env.CRDDirectoryPaths...)
-				seenErrorIfMissing = env.ErrorIfCRDPathMissing
-				seenAttachOutput = env.AttachControlPlaneOutput
-				return &rest.Config{Host: "https://ok"}, nil
-			},
-			stopFn: func(_ *envtest.Environment) error { return nil },
-		}
-	}
+	e.setBackendForTesting(&fakeBackend{
+		startFn: func(env *envtest.Environment) (*rest.Config, error) {
+			seenCRDPaths = append(seenCRDPaths, env.CRDDirectoryPaths...)
+			seenErrorIfMissing = env.ErrorIfCRDPathMissing
+			seenAttachOutput = env.AttachControlPlaneOutput
+			return &rest.Config{Host: "https://ok"}, nil
+		},
+		stopFn: func(_ *envtest.Environment) error { return nil },
+	})
 
 	if _, err := e.Start(); err != nil {
 		t.Fatalf("unexpected start error: %v", err)
@@ -151,17 +135,16 @@ func TestEmbeddedUpstreamDefinitionIsUsedDirectly(t *testing.T) {
 	}
 }
 
-func TestExplicitBackendFieldIsUsed(t *testing.T) {
+func TestSetBackendIsUsed(t *testing.T) {
 	called := false
-	e := &Environment{
-		Backend: &fakeBackend{
-			startFn: func(_ *envtest.Environment) (*rest.Config, error) {
-				called = true
-				return &rest.Config{Host: "https://field-backend"}, nil
-			},
-			stopFn: func(_ *envtest.Environment) error { return nil },
+	e := &Environment{}
+	e.SetBackend(&fakeBackend{
+		startFn: func(_ *envtest.Environment) (*rest.Config, error) {
+			called = true
+			return &rest.Config{Host: "https://field-backend"}, nil
 		},
-	}
+		stopFn: func(_ *envtest.Environment) error { return nil },
+	})
 
 	cfg, err := e.Start()
 	if err != nil {
@@ -178,7 +161,7 @@ func TestExplicitBackendFieldIsUsed(t *testing.T) {
 func TestResolveBackendUsesSharedBackendWhenFlagEnabled(t *testing.T) {
 	t.Setenv(experimentalSharedBackendEnv, "1")
 	e := &Environment{}
-	backend := e.resolveBackend()
+	backend := stateFor(e).resolveBackend()
 	if _, ok := backend.(*SharedEnvtestBackend); !ok {
 		t.Fatalf("expected shared backend when %s=1, got %T", experimentalSharedBackendEnv, backend)
 	}

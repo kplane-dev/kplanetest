@@ -190,11 +190,7 @@ func TestKplanetestCRDInstallParity(t *testing.T) {
 				}
 				stop = func() { _ = e.Stop() }
 			case "kplanetest":
-				e := &kplanetest.Environment{
-					Environment: envtest.Environment{
-						CRDDirectoryPaths: []string{crdPath},
-					},
-				}
+				e := &kplanetest.Environment{CRDDirectoryPaths: []string{crdPath}}
 				var err error
 				cfg, err = e.Start()
 				if err != nil {

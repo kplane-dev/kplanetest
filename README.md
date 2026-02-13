@@ -30,9 +30,7 @@ Initial v1 is implemented as an envtest-compatible surface with:
 ## Intended usage
 ```go
 env := &kplanetest.Environment{
-  Environment: envtest.Environment{
-    CRDDirectoryPaths: []string{"../config/crd/bases"},
-  },
+  CRDDirectoryPaths: []string{"../config/crd/bases"},
 }
 cfg, err := env.Start()
 if err != nil {
@@ -59,6 +57,12 @@ Run e2e conformance/perf (requires envtest assets):
 ```bash
 KUBEBUILDER_ASSETS=/path/to/envtest/bin go test -tags=e2e ./test/e2e/conformance/...
 KUBEBUILDER_ASSETS=/path/to/envtest/bin KPLANETEST_PERF=1 go test -tags=e2e ./test/perf/...
+```
+
+Run optional live-kplane validation (requires a reachable kplane kubeconfig):
+```bash
+KPLANETEST_KPLANE_KUBECONFIG=/path/to/kplane.kubeconfig go test -tags=e2e ./test/e2e/conformance -run TestKplaneExternalCRUD -v
+KUBEBUILDER_ASSETS=/path/to/envtest/bin KPLANETEST_PERF=1 KPLANETEST_KPLANE_KUBECONFIG=/path/to/kplane.kubeconfig go test -tags=e2e ./test/perf -run TestKplaneExternalCRUDPerformance -v
 ```
 
 ## Attribution

@@ -167,10 +167,8 @@ func TestContractMissingCRDPathStrictModeParity(t *testing.T) {
 			name: "kplanetest",
 			new: func() contractEnvironment {
 				return &kplanetest.Environment{
-					Environment: envtest.Environment{
-						CRDDirectoryPaths:     []string{missingPath},
-						ErrorIfCRDPathMissing: true,
-					},
+					CRDDirectoryPaths:     []string{missingPath},
+					ErrorIfCRDPathMissing: true,
 				}
 			},
 		},
@@ -205,9 +203,7 @@ func TestContractUseExistingClusterParity(t *testing.T) {
 		{
 			name: "kplanetest",
 			new: func() contractEnvironment {
-				return &kplanetest.Environment{
-					Environment: envtest.Environment{UseExistingCluster: &useExisting},
-				}
+				return &kplanetest.Environment{UseExistingCluster: &useExisting}
 			},
 		},
 	}

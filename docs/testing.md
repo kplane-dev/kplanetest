@@ -18,12 +18,17 @@
 ## Prerequisites for e2e
 Set `KUBEBUILDER_ASSETS` to an envtest assets directory.
 For perf guardrails, also set `KPLANETEST_PERF=1`.
+To validate a live kplane apiserver, set `KPLANETEST_KPLANE_KUBECONFIG` to a kubeconfig path.
 
 ## CI helper
 Use `scripts/ci-verify.sh` for a CI-friendly default flow:
 - always run unit tests,
 - run e2e conformance when `KUBEBUILDER_ASSETS` is set,
 - run perf guardrails when both `KUBEBUILDER_ASSETS` and `KPLANETEST_PERF=1` are set.
+
+Optional live-kplane checks:
+- `go test -tags=e2e ./test/e2e/conformance -run TestKplaneExternalCRUD -v`
+- `go test -tags=e2e ./test/perf -run TestKplaneExternalCRUDPerformance -v`
 
 ## Attribution policy
 When borrowing tests, fixtures, or structure from upstream projects:

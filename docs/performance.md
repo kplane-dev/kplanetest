@@ -16,6 +16,9 @@ It is intentionally budget-based (not absolute) to keep it stable in CI.
 - `KPLANETEST_PERF=1` (required): enables perf guardrail tests.
 - `KPLANETEST_PERF_ITERATIONS` (optional, default `3`): number of samples.
 - `KPLANETEST_STARTUP_BUDGET_PCT` (optional, default `20`): allowed percent over envtest average.
+- `KPLANETEST_KPLANE_KUBECONFIG` (optional): enables live kplane CRUD performance comparison.
+- `KPLANETEST_KPLANE_CRUD_BUDGET_PCT` (optional, default `200`): budget when enforcing live kplane CRUD comparisons.
+- `KPLANETEST_PERF_ENFORCE=1` (optional): fail tests on live kplane CRUD budget breach; otherwise logs only.
 
 ## CI command
 ```bash

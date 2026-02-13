@@ -46,72 +46,137 @@ func (b instrumentedBackend) Stop(env *envtest.Environment) error {
 	return err
 }
 
-// Environment is an envtest-compatible test environment.
-// v1 embeds upstream envtest.Environment as the canonical definition and adds
-// optional lifecycle metrics plus backend indirection for future swap work.
-type Environment struct {
-	envtest.Environment
-
-	// Backend optionally overrides the lifecycle implementation.
-	// If nil, EnvtestBackend is used.
-	Backend Backend
-
-	// Metrics is optional. If nil, a default in-memory collector is used.
-	Metrics *Metrics
-
-	mu         sync.Mutex
-	newBackend func() Backend
-	now        func() time.Time
+type environmentState struct {
+	mu             sync.Mutex
+	override       Backend
+	runningBackend Backend
+	metrics        *Metrics
+	now            func() time.Time
 }
 
-func (e *Environment) clock() func() time.Time {
-	if e.now != nil {
-		return e.now
-	}
-	return time.Now
+var environmentStates sync.Map // map[*Environment]*environmentState
+
+// Environment is a drop-in compatible envtest surface.
+// It keeps the same field contract as upstream envtest while allowing backend
+// selection and instrumentation through package internals.
+type Environment envtest.Environment
+
+func (e *Environment) upstream() *envtest.Environment {
+	return (*envtest.Environment)(e)
 }
 
-func (e *Environment) collector() *Metrics {
-	if e.Metrics == nil {
-		e.Metrics = NewMetrics()
+func stateFor(e *Environment) *environmentState {
+	if e == nil {
+		return &environmentState{}
 	}
-	return e.Metrics
+	if s, ok := environmentStates.Load(e); ok {
+		return s.(*environmentState)
+	}
+	s := &environmentState{}
+	actual, _ := environmentStates.LoadOrStore(e, s)
+	return actual.(*environmentState)
 }
 
-func (e *Environment) resolveBackend() Backend {
-	if e.newBackend != nil {
-		return e.newBackend()
-	}
-	if e.Backend != nil {
-		return e.Backend
-	}
+func defaultBackend() Backend {
 	if sharedBackendEnabled() {
 		return defaultSharedBackend
 	}
 	return EnvtestBackend{}
 }
 
-func (e *Environment) instrumentedBackend() Backend {
-	return instrumentedBackend{
-		inner:   e.resolveBackend(),
-		metrics: e.collector(),
-		now:     e.clock(),
+func (s *environmentState) clock() func() time.Time {
+	if s.now != nil {
+		return s.now
 	}
+	return time.Now
+}
+
+func (s *environmentState) collector() *Metrics {
+	if s.metrics == nil {
+		s.metrics = NewMetrics()
+	}
+	return s.metrics
+}
+
+func (s *environmentState) resolveBackend() Backend {
+	if s.override != nil {
+		return s.override
+	}
+	return defaultBackend()
+}
+
+func (s *environmentState) instrumentedBackend(inner Backend) Backend {
+	return instrumentedBackend{
+		inner:   inner,
+		metrics: s.collector(),
+		now:     s.clock(),
+	}
+}
+
+// SetBackend overrides backend selection for this Environment instance.
+func (e *Environment) SetBackend(b Backend) {
+	s := stateFor(e)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.override = b
+}
+
+// MetricsSnapshot returns lifecycle metrics for this Environment.
+func (e *Environment) MetricsSnapshot() MetricsSnapshot {
+	s := stateFor(e)
+	s.mu.Lock()
+	m := s.collector()
+	s.mu.Unlock()
+	return m.Snapshot()
+}
+
+func (e *Environment) setClockForTesting(now func() time.Time) {
+	s := stateFor(e)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.now = now
+}
+
+func (e *Environment) setBackendForTesting(b Backend) {
+	s := stateFor(e)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.override = b
+}
+
+// AddUser matches upstream envtest behavior.
+func (e *Environment) AddUser(user envtest.User, baseConfig *rest.Config) (*envtest.AuthenticatedUser, error) {
+	return e.upstream().AddUser(user, baseConfig)
 }
 
 // Start boots the environment and returns a rest.Config, following upstream
 // envtest behavior.
 func (e *Environment) Start() (*rest.Config, error) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	s := stateFor(e)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	return e.instrumentedBackend().Start(&e.Environment)
+	backend := s.resolveBackend()
+	cfg, err := s.instrumentedBackend(backend).Start(e.upstream())
+	if err == nil {
+		s.runningBackend = backend
+	}
+	return cfg, err
 }
 
 // Stop tears down the environment, following upstream envtest behavior.
 func (e *Environment) Stop() error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
+	s := stateFor(e)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	return e.instrumentedBackend().Stop(&e.Environment)
+	backend := s.runningBackend
+	if backend == nil {
+		backend = s.resolveBackend()
+	}
+	err := s.instrumentedBackend(backend).Stop(e.upstream())
+	if err == nil {
+		s.runningBackend = nil
+	}
+	return err
 }
