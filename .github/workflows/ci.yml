@@ -82,7 +82,7 @@ jobs:
 
       - name: Resolve kplanetest assets
         run: |
-          echo "KPLANETEST_ASSETS=$(go run ./cmd/setup-kplanetest use -p path v0.0.6)" >> "${GITHUB_ENV}"
+          echo "KPLANETEST_ASSETS=$(go run ./cmd/setup-kplanetest use -p path v0.0.8)" >> "${GITHUB_ENV}"
 
       - name: E2E conformance tests
         run: go test -tags=e2e ./test/e2e/conformance/... -v -count=1 -timeout=240s
@@ -109,7 +109,7 @@ jobs:
 
       - name: Resolve kplanetest assets
         run: |
-          echo "KPLANETEST_ASSETS=$(go run ./cmd/setup-kplanetest use -p path v0.0.6)" >> "${GITHUB_ENV}"
+          echo "KPLANETEST_ASSETS=$(go run ./cmd/setup-kplanetest use -p path v0.0.8)" >> "${GITHUB_ENV}"
 
       - name: E2E perf tests
         run: |
