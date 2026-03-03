@@ -8,10 +8,12 @@ import (
 	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -35,7 +37,7 @@ import (
 const (
 	defaultRootControlPlane = "root"
 	kplaneReadyTimeout      = 60 * time.Second
-	kplaneModuleVersion     = "v0.0.8"
+	kplaneModuleVersion     = "v0.0.9"
 	kplaneAssetsEnv         = "KPLANETEST_ASSETS"
 	kplaneBinaryEnv         = "KPLANETEST_APISERVER_BINARY"
 )
@@ -58,7 +60,12 @@ func (b *KplaneBackend) Start(env *envtest.Environment) (*rest.Config, error) {
 
 	useExisting := true
 	env.UseExistingCluster = &useExisting
-	env.Config = rest.CopyConfig(cfg)
+	// Bootstrap envtest using insecure transport for compatibility with existing-cluster startup.
+	bootstrapCfg := rest.CopyConfig(cfg)
+	bootstrapCfg.TLSClientConfig.CAData = nil
+	bootstrapCfg.TLSClientConfig.CAFile = ""
+	bootstrapCfg.TLSClientConfig.Insecure = true
+	env.Config = bootstrapCfg
 	env.KubeConfig = nil
 
 	startedCfg, err := env.Start()
@@ -66,7 +73,14 @@ func (b *KplaneBackend) Start(env *envtest.Environment) (*rest.Config, error) {
 		_ = b.runtime.release(env)
 		return nil, err
 	}
-	return startedCfg, nil
+
+	// After startup, switch to verified TLS for downstream clients and kubeconfig generation.
+	returnCfg := rest.CopyConfig(startedCfg)
+	returnCfg.TLSClientConfig.CAData = append([]byte(nil), cfg.TLSClientConfig.CAData...)
+	returnCfg.TLSClientConfig.CAFile = ""
+	returnCfg.TLSClientConfig.Insecure = len(returnCfg.TLSClientConfig.CAData) == 0
+	env.Config = rest.CopyConfig(returnCfg)
+	return returnCfg, nil
 }
 
 func (b *KplaneBackend) Stop(env *envtest.Environment) error {
@@ -91,6 +105,10 @@ type kplaneRuntime struct {
 
 	baseURL string
 	token   string
+	caData  []byte
+	user    string
+	certData []byte
+	keyData  []byte
 
 	logMu sync.Mutex
 	logs  bytes.Buffer
@@ -153,11 +171,24 @@ func (r *kplaneRuntime) release(env *envtest.Environment) error {
 }
 
 func (r *kplaneRuntime) configForCluster(clusterID string) *rest.Config {
+	caData := append([]byte(nil), r.caData...)
+	insecure := len(caData) == 0
+	certData := append([]byte(nil), r.certData...)
+	keyData := append([]byte(nil), r.keyData...)
+	bearerToken := ""
+	if len(certData) == 0 || len(keyData) == 0 {
+		bearerToken = r.token
+	}
 	return &rest.Config{
 		Host:        fmt.Sprintf("%s/clusters/%s/control-plane", r.baseURL, clusterID),
-		BearerToken: r.token,
+		Username:    r.user,
+		BearerToken: bearerToken,
 		TLSClientConfig: rest.TLSClientConfig{
-			Insecure: true, // test harness only
+			// Use verified TLS when CAData is available; fallback to insecure for legacy behavior.
+			Insecure: insecure, // test harness only
+			CAData:   caData,
+			CertData: certData,
+			KeyData:  keyData,
 		},
 		QPS:   1000.0,
 		Burst: 2000.0,
@@ -230,6 +261,11 @@ func (r *kplaneRuntime) startLockedWithEtcdTLS(useEtcdTLS bool) error {
 		cancel()
 		return err
 	}
+	clientCAFile, clientCertData, clientKeyData, err := writeClientAuthMaterial(tmpDir)
+	if err != nil {
+		cancel()
+		return err
+	}
 
 	bin, err := ensureKplaneBinary()
 	if err != nil {
@@ -247,10 +283,13 @@ func (r *kplaneRuntime) startLockedWithEtcdTLS(useEtcdTLS bool) error {
 		"--etcd-servers=" + etcdEndpoint,
 		"--cert-dir=" + filepath.Join(tmpDir, "certs"),
 		"--secure-port=" + strconv.Itoa(securePort),
+		"--advertise-address=127.0.0.1",
+		"--external-hostname=127.0.0.1",
 		"--enable-aggregator-routing=true",
 		"--authorization-mode=RBAC",
 		"--anonymous-auth=true",
 		"--token-auth-file=" + tokenFile,
+		"--client-ca-file=" + clientCAFile,
 		"--allow-privileged=true",
 		"--service-cluster-ip-range=10.0.0.0/24",
 		"--service-account-issuer=kplanetest",
@@ -279,9 +318,18 @@ func (r *kplaneRuntime) startLockedWithEtcdTLS(useEtcdTLS bool) error {
 		_ = r.stopLocked()
 		return err
 	}
+	caData, err := r.captureServerCA(baseURL)
+	if err != nil {
+		_ = r.stopLocked()
+		return fmt.Errorf("capture kplane apiserver CA data: %w", err)
+	}
 
 	r.baseURL = baseURL
 	r.token = token
+	r.caData = caData
+	r.user = "admin"
+	r.certData = clientCertData
+	r.keyData = clientKeyData
 	r.envRefs = make(map[*envtest.Environment]int)
 	r.envIDs = make(map[*envtest.Environment]string)
 	return nil
@@ -308,11 +356,23 @@ func (r *kplaneRuntime) stopLocked() error {
 		_ = os.RemoveAll(r.tmpDir)
 	}
 
+	// Optional debug dump for diagnosing downstream integration failures.
+	if os.Getenv("KPLANETEST_DEBUG_DUMP_LOGS") == "1" {
+		logs := strings.TrimSpace(r.logString())
+		if logs != "" {
+			_, _ = fmt.Fprintf(os.Stderr, "\n[kplanetest] captured kplane-apiserver logs:\n%s\n", logs)
+		}
+	}
+
 	r.cancel = nil
 	r.cmd = nil
 	r.tmpDir = ""
 	r.baseURL = ""
 	r.token = ""
+	r.caData = nil
+	r.user = ""
+	r.certData = nil
+	r.keyData = nil
 	r.totalRefs = 0
 	r.nextID = 0
 	r.envRefs = nil
@@ -337,10 +397,15 @@ func (r *kplaneRuntime) captureLogs(stream string, src io.ReadCloser) {
 	r.logMu.Unlock()
 
 	for scanner.Scan() {
+		line := scanner.Text()
 		r.logMu.Lock()
-		r.logs.WriteString(scanner.Text())
+		r.logs.WriteString(line)
 		r.logs.WriteString("\n")
 		r.logMu.Unlock()
+
+		if os.Getenv("KPLANETEST_DEBUG_STREAM_LOGS") == "1" {
+			_, _ = fmt.Fprintf(os.Stderr, "[kplanetest %s] %s\n", stream, line)
+		}
 	}
 }
 
@@ -370,6 +435,50 @@ func (r *kplaneRuntime) waitReady(baseURL, rootCluster, token string) error {
 		time.Sleep(500 * time.Millisecond)
 	}
 	return fmt.Errorf("kplane apiserver not ready: %v\nlogs:\n%s", lastErr, r.logString())
+}
+
+func (r *kplaneRuntime) captureServerCA(baseURL string) ([]byte, error) {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse base url %q: %w", baseURL, err)
+	}
+	hostPort := u.Host
+	if hostPort == "" {
+		return nil, fmt.Errorf("empty host in base url %q", baseURL)
+	}
+
+	dialer := &net.Dialer{Timeout: 2 * time.Second}
+	conn, err := tls.DialWithDialer(dialer, "tcp", hostPort, &tls.Config{
+		InsecureSkipVerify: true, // only for harvesting peer cert chain
+	})
+	if err != nil {
+		return nil, fmt.Errorf("tls dial %q: %w", hostPort, err)
+	}
+	defer conn.Close()
+
+	state := conn.ConnectionState()
+	if len(state.PeerCertificates) == 0 {
+		return nil, fmt.Errorf("peer did not present certificates")
+	}
+
+	var out bytes.Buffer
+	wrote := false
+	for _, cert := range state.PeerCertificates {
+		if !cert.IsCA {
+			continue
+		}
+		if err := pem.Encode(&out, &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}); err != nil {
+			return nil, fmt.Errorf("encode CA cert: %w", err)
+		}
+		wrote = true
+	}
+	if !wrote {
+		leaf := state.PeerCertificates[len(state.PeerCertificates)-1]
+		if err := pem.Encode(&out, &pem.Block{Type: "CERTIFICATE", Bytes: leaf.Raw}); err != nil {
+			return nil, fmt.Errorf("encode fallback cert: %w", err)
+		}
+	}
+	return out.Bytes(), nil
 }
 
 func (r *kplaneRuntime) logString() string {
@@ -488,4 +597,53 @@ func writeRSAKey(path string) (string, error) {
 		return "", fmt.Errorf("write rsa key: %w", err)
 	}
 	return path, nil
+}
+
+func writeClientAuthMaterial(dir string) (clientCAPath string, clientCertData, clientKeyData []byte, err error) {
+	now := time.Now()
+	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("generate client CA key: %w", err)
+	}
+	caTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "kplanetest-client-ca"},
+		NotBefore:             now.Add(-1 * time.Hour),
+		NotAfter:              now.Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("create client CA cert: %w", err)
+	}
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})
+	clientCAPath = filepath.Join(dir, "client-ca.crt")
+	if err := os.WriteFile(clientCAPath, caPEM, 0o600); err != nil {
+		return "", nil, nil, fmt.Errorf("write client CA cert: %w", err)
+	}
+
+	clientKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("generate client key: %w", err)
+	}
+	clientTemplate := &x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject: pkix.Name{
+			CommonName:   "admin",
+			Organization: []string{"system:masters"},
+		},
+		NotBefore:    now.Add(-1 * time.Hour),
+		NotAfter:     now.Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	clientDER, err := x509.CreateCertificate(rand.Reader, clientTemplate, caTemplate, &clientKey.PublicKey, caKey)
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("create client cert: %w", err)
+	}
+	clientCertData = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientDER})
+	clientKeyData = pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(clientKey)})
+	return clientCAPath, clientCertData, clientKeyData, nil
 }
